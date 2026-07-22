@@ -173,6 +173,22 @@
   footer{ padding:10px 24px; font-size:11.5px; color:var(--ink-faint); border-top:1px solid var(--line); }
   footer b{ color:var(--ink-dim); }
 
+  .tabs{ display:flex; gap:4px; background:var(--bg-elev); border:1px solid var(--line); border-radius:10px; padding:3px; }
+  .tabbtn{
+    border:none; background:transparent; color:var(--ink-dim); font-family:inherit;
+    padding:7px 13px; border-radius:8px; font-size:12.5px; font-weight:700; cursor:pointer;
+  }
+  .tabbtn.active{ background:var(--hub); color:var(--hub-ink); }
+  #lockBtn.locked{ color:#e0a53c; border-color: color-mix(in srgb, #e0a53c 45%, var(--line)); }
+  #lockBtn.unlocked{ color:#5fac6d; border-color: color-mix(in srgb, #5fac6d 45%, var(--line)); }
+  .locked-banner{
+    position:absolute; top:14px; left:50%; transform:translateX(-50%);
+    background:var(--bg-panel); border:1px solid var(--line); backdrop-filter:blur(6px);
+    padding:7px 16px; border-radius:999px; font-size:12px; font-weight:700; color:var(--ink-dim);
+    display:none; z-index:20; white-space:nowrap;
+  }
+  .locked-banner.show{ display:block; }
+
   @media (max-width: 640px){
     header{ padding:14px 16px; }
     header h1{ font-size:17px; }
@@ -185,9 +201,14 @@
 
 <header>
   <div class="titlewrap">
-    <h1>🗺️ Cesta hrdiny — sdílená roadmapa</h1>
-    <div class="sub"><span id="connStatus">🟡 Připojuji se…</span> · přetáhni pro přesun · barvy jsou tvoje</div>
+    <h1>🗺️ Cesta hrdiny</h1>
+    <div class="sub"><span id="connStatus">🟡 Připojuji se…</span> · barvy jsou tvoje</div>
   </div>
+  <div class="tabs" id="boardTabs">
+    <button class="tabbtn active" data-board="roadmap">🗺️ Roadmapa</button>
+    <button class="tabbtn" data-board="brainstorm">💡 Brainstorm</button>
+  </div>
+  <button class="toolbtn locked" id="lockBtn">🔒 Uzamčeno</button>
   <div class="legend" id="legend"></div>
   <button class="toolbtn" id="addCatBtn">+ Kategorie</button>
   <button class="toolbtn ghost" id="exportBtn">Export</button>
@@ -197,6 +218,7 @@
 </header>
 
 <div class="stage-wrap" id="stageWrap">
+  <div class="locked-banner" id="lockedBanner">🔒 Roadmapa je uzamčená — jen k prohlížení. Odemkni kódem nahoře.</div>
   <div class="stage" id="stage">
     <svg class="links" id="links"></svg>
     <div id="nodesLayer"></div>
@@ -246,7 +268,23 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
   var fbApp = initializeApp(firebaseConfig);
   var auth = getAuth(fbApp);
   var db = getDatabase(fbApp);
-  var roadmapRef = ref(db, "roadmap");
+
+  var UNLOCK_CODE = "1379";
+  var roadmapUnlocked = false;
+  try{ roadmapUnlocked = sessionStorage.getItem("roadmap_unlocked") === "1"; }catch(e){}
+
+  var BOARDS = {
+    roadmap: { label:"Roadmapa", dbRef: ref(db, "roadmap"), lockable:true, fresh:null, firstSync:false },
+    brainstorm: { label:"Brainstorm", dbRef: ref(db, "brainstorm"), lockable:false, fresh:null, firstSync:false }
+  };
+  var currentBoardId = "roadmap";
+  var unsubscribeCurrent = null;
+
+  function currentBoard(){ return BOARDS[currentBoardId]; }
+  function isEditable(){
+    var b = currentBoard();
+    return !b.lockable || roadmapUnlocked;
+  }
 
   function setStatus(mode){
     var el = document.getElementById("connStatus");
@@ -339,8 +377,25 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     return { nodes:nodes, categories:cats };
   }
 
+  // Brainstorm starts nearly empty on purpose - it is a scratch space, not
+  // a second copy of the curated roadmap. Just a hub and one starter
+  // category so the existing "+" controls have somewhere to grow from.
+  function freshBrainstormState(){
+    return {
+      nodes: [
+        { id:"hub", cat:"hub", label:"Nápady", status:"done", color:null, note:"", x:1000, y:750, kind:"hub" },
+        { id:"ideas_root", cat:"ideas", label:"Nápady", status:"done", color:null, note:"", x:1000, y:480, kind:"root" }
+      ],
+      categories: [
+        { id:"ideas", label:"Nápady", color:"#3fb8b3", x:1000, y:480 }
+      ]
+    };
+  }
+
+  BOARDS.roadmap.fresh = freshState;
+  BOARDS.brainstorm.fresh = freshBrainstormState;
+
   var state = freshState();
-  var firstSyncDone = false;
   var saveDebounceTimer = null;
 
   // Debounced so rapid typing (label/note fields fire this on every
@@ -348,10 +403,12 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
   // keeps the number of "echo" updates the onValue listener sees down to
   // roughly one per pause-in-typing instead of one per keystroke.
   function save(){
+    if(!isEditable()) return;
     if(saveDebounceTimer) clearTimeout(saveDebounceTimer);
+    var targetRef = currentBoard().dbRef;
     saveDebounceTimer = setTimeout(function(){
       saveDebounceTimer = null;
-      set(roadmapRef, state).catch(function(err){
+      set(targetRef, state).catch(function(err){
         console.error("Firebase write failed", err);
         setStatus("offline");
       });
@@ -469,6 +526,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
       var input = document.createElement("input");
       input.type = "color";
       input.value = cat.color;
+      input.disabled = !isEditable();
       input.addEventListener("input", function(){
         cat.color = input.value;
         chip.style.setProperty("--dot", cat.color);
@@ -477,22 +535,25 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
         save();
       });
       chip.appendChild(input);
-      var del = document.createElement("button");
-      del.type = "button";
-      del.className = "del";
-      del.title = "Smazat kategorii " + cat.label;
-      del.textContent = "✕";
-      del.addEventListener("click", function(ev){
-        ev.preventDefault();
-        ev.stopPropagation();
-        deleteCategory(cat.id);
-      });
-      chip.appendChild(del);
+      if(isEditable()){
+        var del = document.createElement("button");
+        del.type = "button";
+        del.className = "del";
+        del.title = "Smazat kategorii " + cat.label;
+        del.textContent = "✕";
+        del.addEventListener("click", function(ev){
+          ev.preventDefault();
+          ev.stopPropagation();
+          deleteCategory(cat.id);
+        });
+        chip.appendChild(del);
+      }
       legend.appendChild(chip);
     });
   }
 
   function addCategory(){
+    if(!isEditable()) return;
     var name = prompt("Název nové kategorie:", "Nová kategorie");
     if(!name) return;
     name = name.trim();
@@ -511,6 +572,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
   }
 
   function deleteCategory(catId){
+    if(!isEditable()) return;
     if(state.categories.length <= 1){
       alert("Musí zůstat aspoň jedna kategorie.");
       return;
@@ -542,7 +604,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
       };
     });
     el.addEventListener("pointermove", function(ev){
-      if(!dragging || dragging.el !== el) return;
+      if(!dragging || dragging.el !== el || !isEditable()) return;
       moved = true;
       var rect = stage.getBoundingClientRect();
       var nx = (ev.clientX - rect.left) - dragging.offX;
@@ -583,7 +645,13 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
       b.classList.toggle("active", b.dataset.v === node.status);
       b.style.setProperty("--accent", effectiveColor(node));
     });
-    fDelete.style.display = (node.kind === "hub" || node.kind === "root") ? "none" : "block";
+    var editable = isEditable();
+    fDelete.style.display = (editable && node.kind !== "hub" && node.kind !== "root") ? "block" : "none";
+    fLabel.readOnly = !editable;
+    fNote.readOnly = !editable;
+    fColor.disabled = !editable;
+    document.getElementById("fColorReset").style.display = editable ? "block" : "none";
+    Array.prototype.forEach.call(fStatus.querySelectorAll("button"), function(b){ b.disabled = !editable; });
     Object.keys(els).forEach(function(id){ els[id].classList.toggle("selected", id === node.id); });
     panel.classList.add("open");
   }
@@ -652,7 +720,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     save();
   });
   fDelete.addEventListener("click", function(){
-    if(!current || current.kind === "hub" || current.kind === "root") return;
+    if(!isEditable() || !current || current.kind === "hub" || current.kind === "root") return;
     state.nodes = state.nodes.filter(function(n){ return n.id !== current.id; });
     closePanel();
     fullRender();
@@ -666,6 +734,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
   });
 
   function addNode(catId){
+    if(!isEditable()) return;
     var cat = catOf(catId);
     var root = nodeOf(catId + "_root");
     var angle = Math.random() * Math.PI * 2;
@@ -685,6 +754,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
 
   function renderCatButtons(){
     document.querySelectorAll(".catbar").forEach(function(b){ b.remove(); });
+    if(!isEditable()) return;
     state.categories.forEach(function(cat){
       var root = nodeOf(cat.id + "_root");
       if(!root) return;
@@ -700,8 +770,9 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
   }
 
   document.getElementById("resetBtn").addEventListener("click", function(){
-    if(!confirm("Obnovit roadmapu do výchozího stavu pro VŠECHNY, kdo tuhle stránku sdílí? Přijdete o vlastní úpravy.")) return;
-    state = freshState();
+    if(!isEditable()) return;
+    if(!confirm("Obnovit \"" + currentBoard().label + "\" do výchozího stavu pro VŠECHNY, kdo tuhle stránku sdílí? Přijdete o vlastní úpravy.")) return;
+    state = currentBoard().fresh();
     save();
     closePanel();
     fullRender();
@@ -724,7 +795,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
   });
   document.getElementById("importFile").addEventListener("change", function(ev){
     var file = ev.target.files && ev.target.files[0];
-    if(!file) return;
+    if(!file || !isEditable()) return;
     var reader = new FileReader();
     reader.onload = function(){
       try{
@@ -753,12 +824,13 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
   // The panel only actually closes if that node is genuinely gone (deleted
   // by someone) - otherwise it stays open and keeps editing normally.
   function applyIncoming(remote){
+    var board = currentBoard();
     if(remote && remote.nodes && remote.categories){
       state = remote;
-    } else if(!firstSyncDone){
-      set(roadmapRef, state);
+    } else if(!board.firstSync){
+      set(board.dbRef, state);
     }
-    firstSyncDone = true;
+    board.firstSync = true;
     var reattached = current ? state.nodes.filter(function(nd){ return nd.id === current.id; })[0] : null;
     fullRender();
     if(current){
@@ -768,21 +840,81 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     setStatus("live");
   }
 
+  // ---------------- board switching + lock ----------------
+  function updateLockUI(){
+    var lockBtn = document.getElementById("lockBtn");
+    var banner = document.getElementById("lockedBanner");
+    var board = currentBoard();
+    var editable = isEditable();
+    lockBtn.style.display = board.lockable ? "inline-block" : "none";
+    if(board.lockable){
+      lockBtn.textContent = editable ? "🔓 Odemčeno" : "🔒 Uzamčeno";
+      lockBtn.className = "toolbtn " + (editable ? "unlocked" : "locked");
+    }
+    banner.classList.toggle("show", board.lockable && !editable);
+    document.getElementById("addCatBtn").style.display = editable ? "inline-block" : "none";
+    document.getElementById("resetBtn").style.display = editable ? "inline-block" : "none";
+    document.getElementById("importBtn").style.display = editable ? "inline-block" : "none";
+  }
+
+  function switchBoard(boardId){
+    if(!BOARDS[boardId] || boardId === currentBoardId){ return; }
+    currentBoardId = boardId;
+    Array.prototype.forEach.call(document.querySelectorAll("#boardTabs .tabbtn"), function(b){
+      b.classList.toggle("active", b.dataset.board === boardId);
+    });
+    if(unsubscribeCurrent){ unsubscribeCurrent(); unsubscribeCurrent = null; }
+    closePanel();
+    state = currentBoard().fresh();
+    updateLockUI();
+    fullRender();
+    setStatus("connecting");
+    unsubscribeCurrent = onValue(currentBoard().dbRef, function(snapshot){
+      if(dragging){ pendingRemote = snapshot.val(); return; }
+      applyIncoming(snapshot.val());
+    }, function(err){
+      console.error("Firebase read failed", err);
+      setStatus("offline");
+    });
+  }
+
+  document.getElementById("boardTabs").addEventListener("click", function(ev){
+    var btn = ev.target.closest(".tabbtn");
+    if(btn) switchBoard(btn.dataset.board);
+  });
+
+  document.getElementById("lockBtn").addEventListener("click", function(){
+    if(roadmapUnlocked){
+      roadmapUnlocked = false;
+    } else {
+      var code = prompt("Zadej kód pro odemčení roadmapy:");
+      if(code === null) return;
+      if(code.trim() !== UNLOCK_CODE){
+        alert("Špatný kód.");
+        return;
+      }
+      roadmapUnlocked = true;
+    }
+    try{ sessionStorage.setItem("roadmap_unlocked", roadmapUnlocked ? "1" : "0"); }catch(e){}
+    updateLockUI();
+    fullRender();
+  });
+
   signInAnonymously(auth).catch(function(err){
     console.error("Firebase auth failed", err);
     setStatus("offline");
     fullRender();
   });
 
-  onValue(roadmapRef, function(snapshot){
+  updateLockUI();
+  fullRender();
+  unsubscribeCurrent = onValue(currentBoard().dbRef, function(snapshot){
     if(dragging){ pendingRemote = snapshot.val(); return; }
     applyIncoming(snapshot.val());
   }, function(err){
     console.error("Firebase read failed", err);
     setStatus("offline");
   });
-
-  fullRender();
 
 })();
 </script>
