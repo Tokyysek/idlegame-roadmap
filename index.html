@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cesta hrdiny — sdílená roadmapa</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%97%BA%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#14161f; --bg-elev:#1b1e2c; --bg-panel:#20233350;
+    --ink:#eef0f6; --ink-dim:#9aa0b8; --ink-faint:#666c85;
+    --line:#2b2f45; --line-soft:#2b2f4590;
+    --hub:#e8c15a; --hub-ink:#241c05;
+    --shadow: 0 8px 24px -8px rgba(0,0,0,.55);
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#eceee5; --bg-elev:#ffffff; --bg-panel:#ffffffd0;
+      --ink:#23261e; --ink-dim:#5b5f4f; --ink-faint:#8b8f7d;
+      --line:#d5d8c8; --line-soft:#d5d8c8a0;
+      --shadow: 0 8px 24px -10px rgba(30,30,10,.25);
+    }
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    font-family: var(--font-ui);
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+    display:flex; flex-direction:column;
+    overflow-x:hidden;
+  }
+
+  /* ---------- header ---------- */
+  header{
+    display:flex; align-items:center; gap:18px;
+    padding:18px 24px; flex-wrap:wrap;
+    border-bottom:1px solid var(--line);
+    position:sticky; top:0; z-index:40;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(10px);
+  }
+  header h1{
+    font-size:20px; margin:0; font-weight:800; letter-spacing:-0.01em;
+    display:flex; align-items:center; gap:10px;
+  }
+  header .sub{ font-size:12.5px; color:var(--ink-dim); margin-top:2px; display:flex; gap:8px; align-items:center; }
+  #connStatus{ font-weight:700; }
+  .titlewrap{ margin-right:auto; }
+  .legend{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .legend-chip{
+    display:flex; align-items:center; gap:7px;
+    padding:6px 11px 6px 8px; border-radius:999px;
+    background:var(--bg-elev); border:1px solid var(--line);
+    font-size:12.5px; font-weight:600; cursor:pointer;
+    user-select:none;
+    transition: transform .12s ease, border-color .12s ease;
+  }
+  .legend-chip:hover{ transform: translateY(-1px); border-color: var(--dot); }
+  .legend-chip .dot{
+    width:11px; height:11px; border-radius:50%; background:var(--dot);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--dot) 22%, transparent);
+  }
+  .legend-chip input[type=color]{
+    position:absolute; opacity:0; width:1px; height:1px; pointer-events:none;
+  }
+  .legend-chip .del{
+    border:none; background:transparent; color:var(--ink-faint); font-size:12px; cursor:pointer;
+    padding:0 0 0 2px; line-height:1;
+  }
+  .legend-chip .del:hover{ color:#e05a5a; }
+  .toolbtn{
+    padding:8px 14px; border-radius:10px; border:1px solid var(--line);
+    background:var(--bg-elev); color:var(--ink); font-size:12.5px; font-weight:700;
+    cursor:pointer; white-space:nowrap;
+  }
+  .toolbtn:hover{ border-color:var(--ink-faint); }
+  .toolbtn.ghost{ background:transparent; }
+
+  /* ---------- canvas ---------- */
+  .stage-wrap{
+    flex:1; overflow:auto; position:relative;
+    background-image:
+      radial-gradient(circle at 1px 1px, var(--line-soft) 1px, transparent 1.6px);
+    background-size: 26px 26px;
+  }
+  .stage{ position:relative; width:2000px; height:1500px; }
+  svg.links{ position:absolute; inset:0; pointer-events:none; overflow:visible; }
+  .bubble{
+    position:absolute; transform: translate(-50%,-50%);
+    min-width: 92px; max-width: 190px;
+    padding:10px 16px; border-radius: 999px;
+    border:1.5px solid var(--edge); background: var(--fill);
+    color: var(--txt, var(--ink));
+    font-size:13px; font-weight:700; line-height:1.25; text-align:center;
+    cursor:grab; box-shadow: var(--shadow); touch-action:none;
+    transition: box-shadow .15s ease, border-color .15s ease;
+  }
+  .bubble:active{ cursor:grabbing; }
+  .bubble.selected{ box-shadow: 0 0 0 3px color-mix(in srgb, var(--edge) 55%, transparent), var(--shadow); }
+  .bubble.planned{ border-style:dashed; opacity:.72; }
+  .bubble.planned::after{
+    content:"plán"; position:absolute; top:-9px; right:-2px;
+    font-size:8.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase;
+    background:var(--bg-elev); color:var(--ink-dim); border:1px solid var(--line);
+    padding:1px 6px; border-radius:999px;
+  }
+  .bubble.hub{ font-size:16px; padding:20px 26px; min-width:120px; font-weight:900; }
+  .bubble .note-dot{
+    position:absolute; bottom:-4px; left:50%; transform:translateX(-50%);
+    width:14px; height:14px; border-radius:50%;
+    background:var(--bg-elev); border:1px solid var(--edge);
+    font-size:8px; display:flex; align-items:center; justify-content:center; line-height:1;
+  }
+  .bubble.root{ font-size:14.5px; padding:13px 20px; font-weight:800; }
+
+  /* ---------- edit panel ---------- */
+  .panel{
+    position:fixed; right:18px; bottom:18px; z-index:60; width:260px;
+    background: var(--bg-elev); border:1px solid var(--line);
+    border-radius: 14px; box-shadow: var(--shadow); padding:16px; display:none;
+  }
+  .panel.open{ display:block; }
+  .panel label{ display:block; font-size:11px; font-weight:700; color:var(--ink-dim); margin:10px 0 5px; text-transform:uppercase; letter-spacing:.04em; }
+  .panel label:first-of-type{ margin-top:0; }
+  .panel input[type=text]{
+    width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line);
+    background:var(--bg); color:var(--ink); font-size:13.5px; font-family:inherit; font-weight:600;
+  }
+  .panel textarea{
+    width:100%; min-height:70px; max-height:160px; padding:8px 10px; border-radius:8px;
+    border:1px solid var(--line); background:var(--bg); color:var(--ink);
+    font-size:12.5px; font-family:inherit; font-weight:500; line-height:1.4; resize:vertical;
+  }
+  .panel .row{ display:flex; gap:8px; align-items:center; }
+  .panel input[type=color]{
+    width:38px; height:32px; border-radius:8px; border:1px solid var(--line); background:none; cursor:pointer; padding:2px;
+  }
+  .seg{ display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; flex:1; }
+  .seg button{
+    flex:1; border:0; background:var(--bg); color:var(--ink-dim); font-size:12px; font-weight:700;
+    padding:7px 0; cursor:pointer; font-family:inherit;
+  }
+  .seg button.active{ background: var(--accent, var(--hub)); color:var(--hub-ink); }
+  .panel-actions{ display:flex; gap:8px; margin-top:14px; }
+  .panel-actions button{
+    flex:1; padding:8px 0; border-radius:8px; border:1px solid var(--line);
+    background:var(--bg); color:var(--ink); font-weight:700; font-size:12.5px; cursor:pointer;
+    font-family:inherit;
+  }
+  .panel-actions button.danger{ color:#e05a5a; border-color: color-mix(in srgb, #e05a5a 40%, var(--line)); }
+  .panel-close{
+    position:absolute; top:10px; right:10px; width:22px; height:22px; border-radius:50%;
+    border:1px solid var(--line); background:var(--bg); color:var(--ink-dim); cursor:pointer;
+    font-size:12px; line-height:1; display:flex; align-items:center; justify-content:center;
+  }
+
+  .catbar{
+    position:absolute; padding:8px 14px; border-radius:10px;
+    background: var(--bg-panel); border:1px solid var(--line);
+    font-size:11px; font-weight:800; color: var(--catink); text-transform:uppercase; letter-spacing:.05em;
+    display:flex; align-items:center; gap:8px; backdrop-filter: blur(6px);
+  }
+  .catbar button{
+    border:none; background: var(--catink); color: var(--bg-elev); width:18px; height:18px; border-radius:50%;
+    font-size:13px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; font-weight:900;
+    padding:0;
+  }
+
+  footer{ padding:10px 24px; font-size:11.5px; color:var(--ink-faint); border-top:1px solid var(--line); }
+  footer b{ color:var(--ink-dim); }
+
+  @media (max-width: 640px){
+    header{ padding:14px 16px; }
+    header h1{ font-size:17px; }
+    .legend-chip span.lbl{ display:none; }
+    .panel{ left:12px; right:12px; width:auto; bottom:12px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="titlewrap">
+    <h1>🗺️ Cesta hrdiny — sdílená roadmapa</h1>
+    <div class="sub"><span id="connStatus">🟡 Připojuji se…</span> · přetáhni pro přesun · barvy jsou tvoje</div>
+  </div>
+  <div class="legend" id="legend"></div>
+  <button class="toolbtn" id="addCatBtn">+ Kategorie</button>
+  <button class="toolbtn ghost" id="exportBtn">Export</button>
+  <button class="toolbtn ghost" id="importBtn">Import</button>
+  <input type="file" id="importFile" accept="application/json" style="display:none">
+  <button class="toolbtn ghost" id="resetBtn">Obnovit výchozí</button>
+</header>
+
+<div class="stage-wrap" id="stageWrap">
+  <div class="stage" id="stage">
+    <svg class="links" id="links"></svg>
+    <div id="nodesLayer"></div>
+  </div>
+</div>
+
+<footer>Plné bubliny = <b>hotovo</b>. Přerušované = <b>plán</b>. Sdíleno živě přes Firebase — vidíš změny druhé osoby v reálném čase.</footer>
+
+<div class="panel" id="panel">
+  <button class="panel-close" id="panelClose">✕</button>
+  <label>Název</label>
+  <input type="text" id="fLabel" maxlength="40">
+  <label>Stav</label>
+  <div class="seg" id="fStatus">
+    <button data-v="done">Hotovo</button>
+    <button data-v="planned">Plán</button>
+  </div>
+  <label>Barva bubliny</label>
+  <div class="row">
+    <input type="color" id="fColor">
+    <button class="toolbtn ghost" id="fColorReset" style="flex:1;font-size:11.5px;padding:7px 0;">Podle kategorie</button>
+  </div>
+  <label>Poznámka</label>
+  <textarea id="fNote" maxlength="600" placeholder="Detaily, odkazy, poznámky…"></textarea>
+  <div class="panel-actions">
+    <button id="fDelete" class="danger">Smazat</button>
+    <button id="fClose">Hotovo</button>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-database.js";
+
+(function(){
+
+  var firebaseConfig = {
+    apiKey: "AIzaSyBD3SBnjF-eqPTc8m5aWsZAPvpsukm6uAA",
+    authDomain: "idlegame-6855b.firebaseapp.com",
+    databaseURL: "https://idlegame-6855b-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "idlegame-6855b",
+    storageBucket: "idlegame-6855b.firebasestorage.app",
+    messagingSenderId: "388691050678",
+    appId: "1:388691050678:web:f6e6c31098ac13b5a46617"
+  };
+  var fbApp = initializeApp(firebaseConfig);
+  var auth = getAuth(fbApp);
+  var db = getDatabase(fbApp);
+  var roadmapRef = ref(db, "roadmap");
+
+  function setStatus(mode){
+    var el = document.getElementById("connStatus");
+    if(!el) return;
+    if(mode === "live") el.textContent = "🟢 Živě sdíleno";
+    else if(mode === "offline") el.textContent = "🔴 Offline (Firebase nedostupný, jen lokálně)";
+    else el.textContent = "🟡 Připojuji se…";
+  }
+
+  var DEFAULT_CATEGORIES = [
+    { id:"character", label:"Postava",             color:"#e2793d", x:520,  y:230 },
+    { id:"world",     label:"Obsah světa",          color:"#5fac6d", x:1520, y:230 },
+    { id:"dungeon",   label:"Dungeony & bossové",   color:"#a374dd", x:1520, y:1120 },
+    { id:"pace",      label:"Tempo levelování",     color:"#3fb8b3", x:520,  y:1120 }
+  ];
+
+  function n(id, cat, label, dx, dy, status){
+    return { id:id, cat:cat, label:label, status:status||"done", color:null, dx:dx, dy:dy };
+  }
+
+  var DEFAULT_NODES = [
+    n("hub","hub","Hráč",0,0,"done"),
+
+    n("character_root","character","Postava",0,0,"done"),
+    n("char_stats","character","Staty a body",-170,-60,"done"),
+    n("char_talents","character","3 třídy + talenty",-190,40,"done"),
+    n("char_ascension","character","Ascension podtřídy",-140,130,"done"),
+    n("char_prestige","character","Prestige / Rebirth",-40,180,"done"),
+    n("char_enchant","character","Enchanting",60,180,"done"),
+    n("char_enhance","character","Vylepšení +9 (pergameny)",150,140,"done"),
+    n("char_sets","character","Sety předmětů",190,60,"done"),
+    n("char_legendary","character","Legendary vzácnost",190,-40,"done"),
+    n("char_gems","character","Drahokamy + tiery",140,-120,"done"),
+    n("char_reforge","character","Reforge",40,-170,"done"),
+    n("char_transmog","character","Transmog vzhledu",-60,-170,"done"),
+    n("char_cosmetic","character","Kosmetické úpravy",-260,10,"done"),
+    n("char_pets","character","Mazlíčci + fúze",260,10,"done"),
+    n("char_professions","character","Řemesla (sběr, vaření)",0,-260,"done"),
+
+    n("world_root","world","Obsah světa",0,0,"done"),
+    n("world_stronghold","world","Stronghold (hub)",-180,-50,"done"),
+    n("world_forest","world","Les",-190,50,"done"),
+    n("world_cave","world","Jeskyně",-140,150,"done"),
+    n("world_orc","world","Orčí kopce",0,200,"done"),
+    n("world_seasonal","world","Sezónní event zóna",140,150,"done"),
+    n("world_rift","world","Rift portály",190,50,"done"),
+    n("world_story","world","Příběhový quest řetězec",180,-50,"done"),
+    n("world_daily","world","Denní úkoly",100,-150,"done"),
+    n("world_collection","world","Collection log",-100,-150,"done"),
+    n("world_teleport","world","Teleport systém",0,-200,"done"),
+    n("world_credits","world","Credits",210,-140,"done"),
+
+    n("dungeon_root","dungeon","Dungeony & bossové",0,0,"done"),
+    n("dun_dungeon","dungeon","Dungeon (5 vln)",-180,-40,"done"),
+    n("dun_endless","dungeon","Endless Dungeon",-160,80,"done"),
+    n("dun_worldboss","dungeon","World Boss (rotující)",0,180,"done"),
+    n("dun_slime","dungeon","Boss Slime",160,110,"done"),
+    n("dun_goblinking","dungeon","Goblin King",210,0,"done"),
+    n("dun_orcwarlord","dungeon","Warlord Grukk (Orc)",160,-100,"done"),
+    n("dun_blacksmith","dungeon","Kovář (risk vylepšení)",0,-190,"done"),
+
+    n("pace_root","pace","Tempo levelování",0,0,"done"),
+    n("pace_curve","pace","XP křivka a level cap",-180,-40,"done"),
+    n("pace_offline","pace","Offline boj (auto-farm)",-170,90,"done"),
+    n("pace_milestones","pace","Kill milestones",0,190,"done"),
+    n("pace_personalbest","pace","Personal best tracking",170,90,"done"),
+    n("pace_clicker","pace","Training Grounds (vedlejší)",180,-40,"done"),
+    n("pace_gearcheck","pace","Vyvážení dle výbavy",0,-190,"planned")
+  ];
+
+  var HUB_ID = "hub";
+
+  function freshState(){
+    var cats = DEFAULT_CATEGORIES.map(function(c){ return Object.assign({}, c); });
+    var nodes = DEFAULT_NODES.map(function(node){
+      var cat = cats.filter(function(c){ return c.id === node.cat; })[0];
+      var baseX = 1000, baseY = 750;
+      if(node.id === HUB_ID){
+        return { id:node.id, cat:"hub", label:node.label, status:"done", color:null, note:"", x:baseX, y:baseY, kind:"hub" };
+      }
+      var isRoot = node.id === node.cat + "_root";
+      var originX = cat ? cat.x : baseX;
+      var originY = cat ? cat.y : baseY;
+      return {
+        id:node.id, cat:node.cat, label:node.label, status:node.status, color:null, note:"",
+        x: originX + node.dx, y: originY + node.dy,
+        kind: isRoot ? "root" : "leaf"
+      };
+    });
+    return { nodes:nodes, categories:cats };
+  }
+
+  var state = freshState();
+  var firstSyncDone = false;
+  var saveDebounceTimer = null;
+
+  // Debounced so rapid typing (label/note fields fire this on every
+  // keystroke) doesn't spam Firebase with a write per character - also
+  // keeps the number of "echo" updates the onValue listener sees down to
+  // roughly one per pause-in-typing instead of one per keystroke.
+  function save(){
+    if(saveDebounceTimer) clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = setTimeout(function(){
+      saveDebounceTimer = null;
+      set(roadmapRef, state).catch(function(err){
+        console.error("Firebase write failed", err);
+        setStatus("offline");
+      });
+    }, 400);
+  }
+
+  function catOf(id){ return state.categories.filter(function(c){ return c.id === id; })[0]; }
+  function nodeOf(id){ return state.nodes.filter(function(n){ return n.id === id; })[0]; }
+  function parentOf(node){
+    if(node.kind === "hub") return null;
+    if(node.kind === "root") return nodeOf(HUB_ID);
+    return nodeOf(node.cat + "_root");
+  }
+  function effectiveColor(node){
+    if(node.kind === "hub") return getVar("--hub");
+    if(node.color) return node.color;
+    var c = catOf(node.cat);
+    return c ? c.color : getVar("--hub");
+  }
+  function getVar(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  var stage = document.getElementById("stage");
+  var nodesLayer = document.getElementById("nodesLayer");
+  var svg = document.getElementById("links");
+  var legend = document.getElementById("legend");
+
+  var els = {};
+
+  function fullRender(){
+    nodesLayer.innerHTML = "";
+    els = {};
+    state.nodes.forEach(function(node){
+      var el = document.createElement("div");
+      el.className = "bubble" + (node.kind === "hub" ? " hub" : node.kind === "root" ? " root" : "") + (node.status === "planned" ? " planned" : "");
+      var labelSpan = document.createElement("span");
+      labelSpan.className = "bubble-label";
+      labelSpan.textContent = node.label;
+      el.appendChild(labelSpan);
+      el.style.left = node.x + "px";
+      el.style.top = node.y + "px";
+      applyColor(el, node);
+      el.dataset.id = node.id;
+      if(node.note){
+        var dot = document.createElement("span");
+        dot.className = "note-dot";
+        dot.textContent = "📝";
+        dot.title = node.note;
+        el.appendChild(dot);
+      }
+      nodesLayer.appendChild(el);
+      els[node.id] = el;
+      makeDraggable(el, node);
+    });
+    renderLinks();
+    renderLegend();
+    renderCatButtons();
+  }
+
+  function applyColor(el, node){
+    var color = effectiveColor(node);
+    el.style.setProperty("--edge", color);
+    if(node.kind === "hub"){
+      el.style.setProperty("--fill", color);
+      el.style.setProperty("--txt", getVar("--hub-ink") || "#241c05");
+    } else {
+      el.style.setProperty("--fill", "color-mix(in srgb, " + color + " 16%, var(--bg-elev))");
+      el.style.setProperty("--txt", "var(--ink)");
+    }
+  }
+
+  function renderLinks(){
+    var w = stage.offsetWidth, h = stage.offsetHeight;
+    svg.setAttribute("width", w);
+    svg.setAttribute("height", h);
+    svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+    var parts = [];
+    state.nodes.forEach(function(node){
+      var p = parentOf(node);
+      if(!p) return;
+      var a = node, b = p;
+      var color = effectiveColor(node);
+      var strokeW = node.kind === "root" ? 3 : 1.6;
+      var op = node.kind === "root" ? 0.55 : 0.4;
+      var dash = node.status === "planned" ? ' stroke-dasharray="5,5"' : "";
+      var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      var dx = b.x - a.x, dy = b.y - a.y;
+      var cx = mx - dy * 0.12, cy = my + dx * 0.12;
+      parts.push('<path d="M ' + a.x + ' ' + a.y + ' Q ' + cx + ' ' + cy + ' ' + b.x + ' ' + b.y +
+        '" stroke="' + color + '" stroke-width="' + strokeW + '" fill="none" opacity="' + op + '"' + dash + ' stroke-linecap="round"/>');
+    });
+    svg.innerHTML = parts.join("");
+    document.querySelectorAll(".catbar").forEach(function(bar, i){
+      var cat = state.categories[i];
+      if(!cat) return;
+      var root = nodeOf(cat.id + "_root");
+      if(!root) return;
+      bar.style.left = (root.x - 10) + "px";
+      bar.style.top = (root.y + 46) + "px";
+    });
+  }
+
+  function escapeHtml(s){
+    var d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function renderLegend(){
+    legend.innerHTML = "";
+    state.categories.forEach(function(cat){
+      var chip = document.createElement("label");
+      chip.className = "legend-chip";
+      chip.style.setProperty("--dot", cat.color);
+      chip.innerHTML = '<span class="dot"></span><span class="lbl">' + escapeHtml(cat.label) + '</span>';
+      var input = document.createElement("input");
+      input.type = "color";
+      input.value = cat.color;
+      input.addEventListener("input", function(){
+        cat.color = input.value;
+        chip.style.setProperty("--dot", cat.color);
+        state.nodes.forEach(function(node){ if(node.cat === cat.id && els[node.id]) applyColor(els[node.id], node); });
+        renderLinks();
+        save();
+      });
+      chip.appendChild(input);
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "del";
+      del.title = "Smazat kategorii " + cat.label;
+      del.textContent = "✕";
+      del.addEventListener("click", function(ev){
+        ev.preventDefault();
+        ev.stopPropagation();
+        deleteCategory(cat.id);
+      });
+      chip.appendChild(del);
+      legend.appendChild(chip);
+    });
+  }
+
+  function addCategory(){
+    var name = prompt("Název nové kategorie:", "Nová kategorie");
+    if(!name) return;
+    name = name.trim();
+    if(!name) return;
+    var id = "cat_" + Date.now();
+    var palette = ["#e2793d","#5fac6d","#a374dd","#3fb8b3","#e0577a","#4f8fe0","#d4b23c","#7a8fa0"];
+    var color = palette[state.categories.length % palette.length];
+    var angle = (state.categories.length * 65) * Math.PI / 180;
+    var cx = 1000 + Math.cos(angle) * 640;
+    var cy = 750 + Math.sin(angle) * 480;
+    var cat = { id:id, label:name, color:color, x:cx, y:cy };
+    state.categories.push(cat);
+    state.nodes.push({ id:id + "_root", cat:id, label:name, status:"done", color:null, note:"", x:cx, y:cy, kind:"root" });
+    fullRender();
+    save();
+  }
+
+  function deleteCategory(catId){
+    if(state.categories.length <= 1){
+      alert("Musí zůstat aspoň jedna kategorie.");
+      return;
+    }
+    var cat = catOf(catId);
+    if(!confirm('Smazat celou kategorii "' + (cat ? cat.label : catId) + '" a všechny její bubliny?')) return;
+    state.categories = state.categories.filter(function(c){ return c.id !== catId; });
+    state.nodes = state.nodes.filter(function(n){ return n.cat !== catId; });
+    closePanelIfMissing();
+    fullRender();
+    save();
+  }
+
+  function closePanelIfMissing(){
+    if(current && !nodeOf(current.id)) closePanel();
+  }
+
+  var dragging = null, moved = false, pendingRemote;
+
+  function makeDraggable(el, node){
+    el.addEventListener("pointerdown", function(ev){
+      el.setPointerCapture(ev.pointerId);
+      moved = false;
+      var rect = stage.getBoundingClientRect();
+      dragging = {
+        node: node, el: el,
+        offX: (ev.clientX - rect.left) - node.x,
+        offY: (ev.clientY - rect.top) - node.y
+      };
+    });
+    el.addEventListener("pointermove", function(ev){
+      if(!dragging || dragging.el !== el) return;
+      moved = true;
+      var rect = stage.getBoundingClientRect();
+      var nx = (ev.clientX - rect.left) - dragging.offX;
+      var ny = (ev.clientY - rect.top) - dragging.offY;
+      node.x = Math.max(40, Math.min(stage.offsetWidth - 40, nx));
+      node.y = Math.max(40, Math.min(stage.offsetHeight - 40, ny));
+      el.style.left = node.x + "px";
+      el.style.top = node.y + "px";
+      renderLinks();
+    });
+    el.addEventListener("pointerup", function(ev){
+      if(dragging && dragging.el === el){
+        dragging = null;
+        if(moved){ save(); }
+        else { openPanel(node); }
+      }
+      if(pendingRemote !== undefined){
+        var pr = pendingRemote; pendingRemote = undefined;
+        applyIncoming(pr);
+      }
+    });
+  }
+
+  var panel = document.getElementById("panel");
+  var fLabel = document.getElementById("fLabel");
+  var fColor = document.getElementById("fColor");
+  var fStatus = document.getElementById("fStatus");
+  var fNote = document.getElementById("fNote");
+  var fDelete = document.getElementById("fDelete");
+  var current = null;
+
+  function openPanel(node){
+    current = node;
+    fLabel.value = node.label;
+    fColor.value = effectiveColor(node);
+    fNote.value = node.note || "";
+    Array.prototype.forEach.call(fStatus.querySelectorAll("button"), function(b){
+      b.classList.toggle("active", b.dataset.v === node.status);
+      b.style.setProperty("--accent", effectiveColor(node));
+    });
+    fDelete.style.display = (node.kind === "hub" || node.kind === "root") ? "none" : "block";
+    Object.keys(els).forEach(function(id){ els[id].classList.toggle("selected", id === node.id); });
+    panel.classList.add("open");
+  }
+  function closePanel(){
+    panel.classList.remove("open");
+    current = null;
+    Object.keys(els).forEach(function(id){ els[id].classList.remove("selected"); });
+  }
+
+  function setNoteDot(node){
+    var el = els[node.id];
+    if(!el) return;
+    var existing = el.querySelector(".note-dot");
+    if(node.note){
+      if(!existing){
+        existing = document.createElement("span");
+        existing.className = "note-dot";
+        existing.textContent = "📝";
+        el.appendChild(existing);
+      }
+      existing.title = node.note;
+    } else if(existing){
+      existing.remove();
+    }
+  }
+
+  fLabel.addEventListener("input", function(){
+    if(!current) return;
+    current.label = fLabel.value || "…";
+    var labelEl = els[current.id].querySelector(".bubble-label");
+    if(labelEl) labelEl.textContent = current.label;
+    if(current.kind === "root"){
+      var cat = catOf(current.cat);
+      if(cat){ cat.label = current.label; renderLegend(); }
+    }
+    save();
+  });
+  fNote.addEventListener("input", function(){
+    if(!current) return;
+    current.note = fNote.value;
+    setNoteDot(current);
+    save();
+  });
+  fColor.addEventListener("input", function(){
+    if(!current) return;
+    current.color = fColor.value;
+    applyColor(els[current.id], current);
+    renderLinks();
+    save();
+  });
+  document.getElementById("fColorReset").addEventListener("click", function(){
+    if(!current) return;
+    current.color = null;
+    fColor.value = effectiveColor(current);
+    applyColor(els[current.id], current);
+    renderLinks();
+    save();
+  });
+  fStatus.addEventListener("click", function(ev){
+    var btn = ev.target.closest("button");
+    if(!btn || !current) return;
+    current.status = btn.dataset.v;
+    els[current.id].classList.toggle("planned", current.status === "planned");
+    Array.prototype.forEach.call(fStatus.querySelectorAll("button"), function(b){ b.classList.toggle("active", b === btn); });
+    renderLinks();
+    save();
+  });
+  fDelete.addEventListener("click", function(){
+    if(!current || current.kind === "hub" || current.kind === "root") return;
+    state.nodes = state.nodes.filter(function(n){ return n.id !== current.id; });
+    closePanel();
+    fullRender();
+    save();
+  });
+  document.getElementById("fClose").addEventListener("click", closePanel);
+  document.getElementById("panelClose").addEventListener("click", closePanel);
+
+  stage.addEventListener("pointerdown", function(ev){
+    if(ev.target === stage || ev.target === nodesLayer) closePanel();
+  });
+
+  function addNode(catId){
+    var cat = catOf(catId);
+    var root = nodeOf(catId + "_root");
+    var angle = Math.random() * Math.PI * 2;
+    var dist = 140 + Math.random() * 60;
+    var id = catId + "_custom_" + Date.now();
+    var node = {
+      id:id, cat:catId, label:"Nová položka", status:"planned", color:null, note:"",
+      x: root.x + Math.cos(angle) * dist, y: root.y + Math.sin(angle) * dist,
+      kind:"leaf"
+    };
+    state.nodes.push(node);
+    fullRender();
+    save();
+    openPanel(node);
+    fLabel.focus(); fLabel.select();
+  }
+
+  function renderCatButtons(){
+    document.querySelectorAll(".catbar").forEach(function(b){ b.remove(); });
+    state.categories.forEach(function(cat){
+      var root = nodeOf(cat.id + "_root");
+      if(!root) return;
+      var bar = document.createElement("div");
+      bar.className = "catbar";
+      bar.style.left = (root.x - 10) + "px";
+      bar.style.top = (root.y + 46) + "px";
+      bar.style.setProperty("--catink", cat.color);
+      bar.innerHTML = '<span>' + escapeHtml(cat.label) + '</span><button title="Přidat bublinu">+</button>';
+      bar.querySelector("button").addEventListener("click", function(){ addNode(cat.id); });
+      nodesLayer.appendChild(bar);
+    });
+  }
+
+  document.getElementById("resetBtn").addEventListener("click", function(){
+    if(!confirm("Obnovit roadmapu do výchozího stavu pro VŠECHNY, kdo tuhle stránku sdílí? Přijdete o vlastní úpravy.")) return;
+    state = freshState();
+    save();
+    closePanel();
+    fullRender();
+  });
+
+  document.getElementById("addCatBtn").addEventListener("click", addCategory);
+
+  document.getElementById("exportBtn").addEventListener("click", function(){
+    var payload = JSON.stringify(state, null, 2);
+    var blob = new Blob([payload], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = "cesta-hrdiny-roadmapa.json";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  });
+
+  document.getElementById("importBtn").addEventListener("click", function(){
+    document.getElementById("importFile").click();
+  });
+  document.getElementById("importFile").addEventListener("change", function(ev){
+    var file = ev.target.files && ev.target.files[0];
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      try{
+        var parsed = JSON.parse(String(reader.result));
+        if(!parsed || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.categories)){
+          throw new Error("invalid shape");
+        }
+        if(!confirm("Nahradit sdílenou roadmapu (pro všechny) importovaným souborem?")) return;
+        state = parsed;
+        closePanel();
+        fullRender();
+        save();
+      }catch(e){
+        alert("Tenhle soubor se nepodařilo načíst - není to platný export z téhle roadmapy.");
+      }
+    };
+    reader.readAsText(file);
+    ev.target.value = "";
+  });
+
+  // Applies a fresh snapshot (ours or someone else's) without disrupting
+  // an in-progress edit: fullRender() rebuilds every node object from the
+  // incoming JSON, which would silently orphan `current` (the panel would
+  // keep writing into an object no longer part of `state.nodes`, quietly
+  // losing keystrokes) unless it's re-pointed at the matching new object.
+  // The panel only actually closes if that node is genuinely gone (deleted
+  // by someone) - otherwise it stays open and keeps editing normally.
+  function applyIncoming(remote){
+    if(remote && remote.nodes && remote.categories){
+      state = remote;
+    } else if(!firstSyncDone){
+      set(roadmapRef, state);
+    }
+    firstSyncDone = true;
+    var reattached = current ? state.nodes.filter(function(nd){ return nd.id === current.id; })[0] : null;
+    fullRender();
+    if(current){
+      if(reattached){ current = reattached; els[current.id].classList.add("selected"); }
+      else { closePanel(); }
+    }
+    setStatus("live");
+  }
+
+  signInAnonymously(auth).catch(function(err){
+    console.error("Firebase auth failed", err);
+    setStatus("offline");
+    fullRender();
+  });
+
+  onValue(roadmapRef, function(snapshot){
+    if(dragging){ pendingRemote = snapshot.val(); return; }
+    applyIncoming(snapshot.val());
+  }, function(err){
+    console.error("Firebase read failed", err);
+    setStatus("offline");
+  });
+
+  fullRender();
+
+})();
+</script>
+</body>
+</html>
