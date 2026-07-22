@@ -357,6 +357,67 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
 
   var HUB_ID = "hub";
 
+  // Built-in hover descriptions for the default catalog bubbles, keyed
+  // per board so the shared "hub"/root ids between Roadmapa and Brainstorm
+  // don't collide. Looked up purely at render time (never written to
+  // Firebase) so every viewer sees them immediately, even on a board that
+  // was already synced before this feature existed.
+  var DESCRIPTIONS = {
+    roadmap: {
+      hub: "Postava hráče – střed celé cesty rozvoje.",
+
+      character_root: "Vše kolem vývoje a customizace tvé postavy.",
+      char_stats: "Základní staty (síla, obratnost…) a body k rozdělení při levelu.",
+      char_talents: "3 herní třídy, každá s vlastním stromem talentů k odemykání.",
+      char_ascension: "Podtřídy pro pokročilý build po dosažení vyššího levelu/prestige.",
+      char_prestige: "Reset postupu výměnou za trvalé bonusy a rychlejší nový start.",
+      char_enchant: "Přidávání kouzelných vlastností na výbavu.",
+      char_enhance: "Vylepšování předmětů až na +9 pomocí pergamenů, s rizikem neúspěchu.",
+      char_sets: "Sady předmětů dávající bonus, pokud nosíš víc kusů ze stejného setu.",
+      char_legendary: "Nejvzácnější tier předmětů s unikátními efekty.",
+      char_gems: "Drahokamy různých tierů vsazené do výbavy pro extra staty.",
+      char_reforge: "Přehazování druhotných statů na předmětu za poplatek.",
+      char_transmog: "Změna vzhledu výbavy nezávisle na jejích statech.",
+      char_cosmetic: "Kosmetické doplňky a vzhledy postavy.",
+      char_pets: "Mazlíčci, které lze sbírat a fúzovat do silnějších verzí.",
+      char_professions: "Řemesla jako sběr surovin a vaření lektvarů.",
+
+      world_root: "Zóny, questy a obsah otevřeného světa.",
+      world_stronghold: "Centrální hub základna, odkud se cestuje do ostatních zón.",
+      world_forest: "První zóna – les se slizy a základními nepřáteli.",
+      world_cave: "Jeskynní zóna s pokročilejšími nepřáteli.",
+      world_orc: "Orčí kopce – 4. zóna s orky a bossem Warlordem Grukkem.",
+      world_seasonal: "Dočasná sezónní zóna s omezeným eventem.",
+      world_rift: "Portály do speciálních rift instancí.",
+      world_story: "Řetězec příběhových questů provázející hráče hrou.",
+      world_daily: "Denní úkoly za odměny, motivace hrát pravidelně.",
+      world_collection: "Log sbírání – přehled objevených předmětů a nepřátel.",
+      world_teleport: "Rychlé cestování mezi už navštívenými mapami.",
+      world_credits: "Přehled použitých assetů a jejich autorů.",
+
+      dungeon_root: "Instancované souboje s vlnami nepřátel a bossy.",
+      dun_dungeon: "Dungeon s 5 vlnami nepřátel a finálním bossem.",
+      dun_endless: "Nekonečný dungeon – jak dlouho vydržíš proti sílícím vlnám.",
+      dun_worldboss: "World boss, který se pravidelně střídá/rotuje.",
+      dun_slime: "Boss Slime – první bossfight, v Lese.",
+      dun_goblinking: "Goblin King – boss Jeskyně.",
+      dun_orcwarlord: "Warlord Grukk – boss Orčích kopců.",
+      dun_blacksmith: "Kovář nabízející riskantní vylepšení výbavy.",
+
+      pace_root: "Tempo postupu a vyvažování levelování.",
+      pace_curve: "Křivka potřebné XP a strop levelu.",
+      pace_offline: "Automatický boj, který farmí i když nehraješ.",
+      pace_milestones: "Odměny za milníky v počtu zabitých nepřátel.",
+      pace_personalbest: "Sledování tvého nejlepšího výsledku (např. v Endless Dungeonu).",
+      pace_clicker: "Training Grounds – vedlejší clicker mini-hra.",
+      pace_gearcheck: "Vyvažování obtížnosti podle síly výbavy hráče."
+    },
+    brainstorm: {
+      hub: "Nápady – volný prostor na brainstorming, mimo hlavní roadmapu.",
+      ideas_root: "Kategorie pro nové nápady k prodiskutování."
+    }
+  };
+
   function freshState(){
     var cats = DEFAULT_CATEGORIES.map(function(c){ return Object.assign({}, c); });
     var nodes = DEFAULT_NODES.map(function(node){
@@ -440,6 +501,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
   function fullRender(){
     nodesLayer.innerHTML = "";
     els = {};
+    var descMap = DESCRIPTIONS[currentBoardId] || {};
     state.nodes.forEach(function(node){
       var el = document.createElement("div");
       el.className = "bubble" + (node.kind === "hub" ? " hub" : node.kind === "root" ? " root" : "") + (node.status === "planned" ? " planned" : "");
@@ -451,6 +513,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
       el.style.top = node.y + "px";
       applyColor(el, node);
       el.dataset.id = node.id;
+      if(descMap[node.id]) el.title = descMap[node.id];
       if(node.note){
         var dot = document.createElement("span");
         dot.className = "note-dot";
