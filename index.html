@@ -108,6 +108,16 @@
     background:var(--bg-elev); color:var(--ink-dim); border:1px solid var(--line);
     padding:1px 6px; border-radius:999px;
   }
+  /* "Předělat" - the bubble describes something that already exists in the
+     game, and the owner wants it changed. Solid like Hotovo, because the thing
+     is still there, but flagged so it reads as an open request at a glance. */
+  .bubble.revisit{ border-style:solid; border-color:#e0a13a; }
+  .bubble.revisit::after{
+    content:"předělat"; position:absolute; top:-9px; right:-2px;
+    font-size:8.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase;
+    background:#e0a13a; color:#1a1206; border:1px solid #e0a13a;
+    padding:1px 6px; border-radius:999px;
+  }
   .bubble.hub{ font-size:16px; padding:20px 26px; min-width:120px; font-weight:900; }
   .bubble .note-dot{
     position:absolute; bottom:-4px; left:50%; transform:translateX(-50%);
@@ -225,7 +235,7 @@
   </div>
 </div>
 
-<footer>Plné bubliny = <b>hotovo</b>. Přerušované = <b>plán</b>. Sdíleno živě přes Firebase — vidíš změny druhé osoby v reálném čase.</footer>
+<footer>Plné bubliny = <b>hotovo</b>. Přerušované = <b>plán</b>. Oranžové <b>předělat</b> = je to ve hře, ale má se to změnit — napiš do poznámky co. Sdíleno živě přes Firebase.</footer>
 
 <div class="panel" id="panel">
   <button class="panel-close" id="panelClose">✕</button>
@@ -235,6 +245,7 @@
   <div class="seg" id="fStatus">
     <button data-v="done">Hotovo</button>
     <button data-v="planned">Plán</button>
+    <button data-v="revisit">Předělat</button>
   </div>
   <label>Barva bubliny</label>
   <div class="row">
@@ -504,7 +515,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     var descMap = DESCRIPTIONS[currentBoardId] || {};
     state.nodes.forEach(function(node){
       var el = document.createElement("div");
-      el.className = "bubble" + (node.kind === "hub" ? " hub" : node.kind === "root" ? " root" : "") + (node.status === "planned" ? " planned" : "");
+      el.className = "bubble" + (node.kind === "hub" ? " hub" : node.kind === "root" ? " root" : "") + (node.status === "planned" ? " planned" : "") + (node.status === "revisit" ? " revisit" : "");
       var labelSpan = document.createElement("span");
       labelSpan.className = "bubble-label";
       labelSpan.textContent = node.label;
@@ -704,6 +715,9 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     fLabel.value = node.label;
     fColor.value = effectiveColor(node);
     fNote.value = node.note || "";
+    fNote.placeholder = node.status === "revisit"
+      ? "Co se na tom má změnit?"
+      : "Detaily, odkazy, poznámky…";
     Array.prototype.forEach.call(fStatus.querySelectorAll("button"), function(b){
       b.classList.toggle("active", b.dataset.v === node.status);
       b.style.setProperty("--accent", effectiveColor(node));
@@ -778,6 +792,12 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     if(!btn || !current) return;
     current.status = btn.dataset.v;
     els[current.id].classList.toggle("planned", current.status === "planned");
+    els[current.id].classList.toggle("revisit", current.status === "revisit");
+    // The status alone says "change this"; the note is where WHAT changes gets
+    // written, so nudge toward filling it in rather than leaving a bare flag.
+    fNote.placeholder = current.status === "revisit"
+      ? "Co se na tom má změnit?"
+      : "Detaily, odkazy, poznámky…";
     Array.prototype.forEach.call(fStatus.querySelectorAll("button"), function(b){ b.classList.toggle("active", b === btn); });
     renderLinks();
     save();
