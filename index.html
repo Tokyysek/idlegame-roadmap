@@ -24,14 +24,18 @@
     }
   }
   *{ box-sizing:border-box; }
-  html,body{ margin:0; padding:0; }
+  html,body{ margin:0; padding:0; height:100%; }
   body{
     font-family: var(--font-ui);
     background: var(--bg);
     color: var(--ink);
-    min-height: 100vh;
+    /* Pinned to the viewport on purpose. With min-height the canvas grew to
+       its full content height, so the PAGE scrolled vertically and the canvas
+       only scrolled sideways - which broke zoom-to-cursor on the vertical
+       axis, because the handler adjusts the canvas's own scroll offset. */
+    height: 100vh;
     display:flex; flex-direction:column;
-    overflow-x:hidden;
+    overflow: hidden;
   }
 
   /* ---------- header ---------- */
@@ -82,7 +86,10 @@
 
   /* ---------- canvas ---------- */
   .stage-wrap{
-    flex:1; overflow:auto; position:relative;
+    /* min-height:0 lets this flex child shrink below its content height -
+       without it, flex:1 refuses to be smaller than the 3000px stage and the
+       scrollbar ends up on the page instead of here. */
+    flex:1 1 0; min-height:0; overflow:auto; position:relative;
     background-image:
       radial-gradient(circle at 1px 1px, var(--line-soft) 1px, transparent 1.6px);
     background-size: 26px 26px;
