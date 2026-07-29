@@ -241,7 +241,6 @@
   <button class="toolbtn ghost" id="exportBtn">Export</button>
   <button class="toolbtn ghost" id="importBtn">Import</button>
   <input type="file" id="importFile" accept="application/json" style="display:none">
-  <button class="toolbtn ghost" id="resetBtn">Obnovit výchozí</button>
 </header>
 
 <div class="stage-wrap" id="stageWrap">
@@ -464,7 +463,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
         kind: isRoot ? "root" : "leaf"
       };
     });
-    return { nodes:nodes, categories:cats };
+    return { nodes:nodes, categories:cats, canvasW:4000, canvasH:3000 };
   }
 
   // Brainstorm starts nearly empty on purpose - it is a scratch space, not
@@ -478,7 +477,8 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
       ],
       categories: [
         { id:"ideas", label:"Nápady", color:"#3fb8b3", x:1000, y:480 }
-      ]
+      ],
+      canvasW:4000, canvasH:3000
     };
   }
 
@@ -701,8 +701,11 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
       moved = true;
       var nx = stageX(ev.clientX) - dragging.offX;
       var ny = stageY(ev.clientY) - dragging.offY;
-      node.x = Math.max(40, Math.min(stage.offsetWidth - 40, nx));
-      node.y = Math.max(40, Math.min(stage.offsetHeight - 40, ny));
+      // Clamped against stageW/H (the shared canvas size from state), not a
+      // DOM measurement - so the barrier is exactly the grid's own edges,
+      // the same for every viewer, never a stale local guess at the size.
+      node.x = Math.max(40, Math.min(stageW - 40, nx));
+      node.y = Math.max(40, Math.min(stageH - 40, ny));
       el.style.left = node.x + "px";
       el.style.top = node.y + "px";
       renderLinks();
@@ -839,13 +842,35 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
   // always in those coordinates, never in screen pixels - and the wheel only
   // changes a CSS scale on top. Anything reading pointer positions therefore
   // has to divide by the zoom, which stageX/stageY below do.
+  // Canvas size (stageW/H) used to live in localStorage - per BROWSER, not
+  // per board. That was the actual cause of "the area grew but I couldn't
+  // drag into it": whoever clicked Grow saved bigger node positions to
+  // Firebase for everyone, but everyone ELSE's own browser still thought the
+  // canvas was the old, smaller size, so their drag clamp cut off exactly
+  // where their local copy assumed the edge was. Canvas size now lives in
+  // state.canvasW/H (shared, synced like everything else); only the zoom
+  // level stays personal, in localStorage, since how far someone has zoomed
+  // in is their own business and not something to push onto the other
+  // person's screen.
   var BASE_W = 4000, BASE_H = 3000, GROW_STEP = 1200;
   var MIN_ZOOM = 0.15, MAX_ZOOM = 2.5;
   var stageWrap = document.getElementById("stageWrap");
   var zoomHint = document.getElementById("zoomHint");
   var zoom = parseFloat(localStorage.getItem("cesta_zoom") || "1") || 1;
-  var stageW = parseInt(localStorage.getItem("cesta_w") || BASE_W, 10) || BASE_W;
-  var stageH = parseInt(localStorage.getItem("cesta_h") || BASE_H, 10) || BASE_H;
+  var stageW = BASE_W, stageH = BASE_H;
+  localStorage.removeItem("cesta_w");
+  localStorage.removeItem("cesta_h");
+
+  // Single source of truth: reads the canvas size FROM state (falling back to
+  // the base size for older saved data that predates canvasW/H) and applies
+  // it to the DOM. Call this whenever `state` changes wholesale - initial
+  // load, a remote update, or a board switch - so the drag barrier always
+  // matches the size everyone else's browser agrees on.
+  function syncCanvasSize(){
+    stageW = (state.canvasW && state.canvasW > 0) ? state.canvasW : BASE_W;
+    stageH = (state.canvasH && state.canvasH > 0) ? state.canvasH : BASE_H;
+    applyView();
+  }
 
   function applyView(){
     stage.style.width = stageW + "px";
@@ -858,8 +883,6 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     stage.style.marginBottom = (stageH * (zoom - 1)) + "px";
     zoomHint.textContent = Math.round(zoom * 100) + " %";
     localStorage.setItem("cesta_zoom", String(zoom));
-    localStorage.setItem("cesta_w", String(stageW));
-    localStorage.setItem("cesta_h", String(stageH));
   }
 
   // Pointer position in stage coordinates, zoom removed.
@@ -902,18 +925,20 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
   document.getElementById("growBtn").addEventListener("click", function(){
     // Grow evenly on both sides and push every node by half the step, so the
     // cluster stays in the middle instead of drifting toward the top-left.
+    // Written into state.canvasW/H (not just the local stageW/H mirror) so
+    // every other viewer's drag barrier grows to match too.
     var stepY = Math.round(GROW_STEP * 0.75);
-    stageW += GROW_STEP;
-    stageH += stepY;
+    state.canvasW = (state.canvasW && state.canvasW > 0 ? state.canvasW : BASE_W) + GROW_STEP;
+    state.canvasH = (state.canvasH && state.canvasH > 0 ? state.canvasH : BASE_H) + stepY;
     state.nodes.forEach(function(n){ n.x += GROW_STEP / 2; n.y += stepY / 2; });
     state.categories.forEach(function(c){ c.x += GROW_STEP / 2; c.y += stepY / 2; });
-    applyView();
+    syncCanvasSize();
     fullRender();
     centerView();
     save();
   });
 
-  applyView();
+  syncCanvasSize();
 
   function addNode(catId){
     if(!isEditable()) return;
@@ -950,15 +975,6 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
       nodesLayer.appendChild(bar);
     });
   }
-
-  document.getElementById("resetBtn").addEventListener("click", function(){
-    if(!isEditable()) return;
-    if(!confirm("Obnovit \"" + currentBoard().label + "\" do výchozího stavu pro VŠECHNY, kdo tuhle stránku sdílí? Přijdete o vlastní úpravy.")) return;
-    state = currentBoard().fresh();
-    save();
-    closePanel();
-    fullRender();
-  });
 
   document.getElementById("addCatBtn").addEventListener("click", addCategory);
 
@@ -1015,6 +1031,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     var wasFirst = !board.firstSync;
     board.firstSync = true;
     var reattached = current ? state.nodes.filter(function(nd){ return nd.id === current.id; })[0] : null;
+    syncCanvasSize();
     fullRender();
     // Only on the first data for a board - re-centring on every remote update
     // would yank the view away while the other person is dragging something.
@@ -1039,7 +1056,6 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     }
     banner.classList.toggle("show", board.lockable && !editable);
     document.getElementById("addCatBtn").style.display = editable ? "inline-block" : "none";
-    document.getElementById("resetBtn").style.display = editable ? "inline-block" : "none";
     document.getElementById("importBtn").style.display = editable ? "inline-block" : "none";
   }
 
@@ -1053,6 +1069,7 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     closePanel();
     state = currentBoard().fresh();
     updateLockUI();
+    syncCanvasSize();
     fullRender();
     setStatus("connecting");
     unsubscribeCurrent = onValue(currentBoard().dbRef, function(snapshot){
