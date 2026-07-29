@@ -87,7 +87,16 @@
       radial-gradient(circle at 1px 1px, var(--line-soft) 1px, transparent 1.6px);
     background-size: 26px 26px;
   }
-  .stage{ position:relative; width:2000px; height:1500px; }
+  /* Base size only - the real size is set from JS (stage grows with the
+     "Větší plocha" button) and the visual scale comes from the wheel zoom. */
+  .stage{ position:relative; width:4000px; height:3000px; transform-origin: 0 0; }
+  .zoom-hint{
+    position:absolute; left:14px; bottom:14px; z-index:40;
+    font-size:11px; font-weight:700; color:var(--ink-dim);
+    background:var(--bg-elev); border:1px solid var(--line);
+    padding:4px 9px; border-radius:999px; pointer-events:none;
+    opacity:.75;
+  }
   svg.links{ position:absolute; inset:0; pointer-events:none; overflow:visible; }
   .bubble{
     position:absolute; transform: translate(-50%,-50%);
@@ -221,6 +230,7 @@
   <button class="toolbtn locked" id="lockBtn">🔒 Uzamčeno</button>
   <div class="legend" id="legend"></div>
   <button class="toolbtn" id="addCatBtn">+ Kategorie</button>
+  <button class="toolbtn ghost" id="growBtn" title="Přidá místo napravo a dolů. Kolečkem myši se přibližuje a oddaluje.">⤢ Větší plocha</button>
   <button class="toolbtn ghost" id="exportBtn">Export</button>
   <button class="toolbtn ghost" id="importBtn">Import</button>
   <input type="file" id="importFile" accept="application/json" style="display:none">
@@ -233,6 +243,7 @@
     <svg class="links" id="links"></svg>
     <div id="nodesLayer"></div>
   </div>
+  <div class="zoom-hint" id="zoomHint">100 %</div>
 </div>
 
 <footer>Plné bubliny = <b>hotovo</b>. Přerušované = <b>plán</b>. Oranžové <b>předělat</b> = je to ve hře, ale má se to změnit — napiš do poznámky co. Sdíleno živě přes Firebase.</footer>
@@ -670,19 +681,19 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     el.addEventListener("pointerdown", function(ev){
       el.setPointerCapture(ev.pointerId);
       moved = false;
-      var rect = stage.getBoundingClientRect();
+      // stageX/stageY divide out the wheel zoom, so a bubble keeps up with the
+      // cursor at any zoom level instead of drifting.
       dragging = {
         node: node, el: el,
-        offX: (ev.clientX - rect.left) - node.x,
-        offY: (ev.clientY - rect.top) - node.y
+        offX: stageX(ev.clientX) - node.x,
+        offY: stageY(ev.clientY) - node.y
       };
     });
     el.addEventListener("pointermove", function(ev){
       if(!dragging || dragging.el !== el || !isEditable()) return;
       moved = true;
-      var rect = stage.getBoundingClientRect();
-      var nx = (ev.clientX - rect.left) - dragging.offX;
-      var ny = (ev.clientY - rect.top) - dragging.offY;
+      var nx = stageX(ev.clientX) - dragging.offX;
+      var ny = stageY(ev.clientY) - dragging.offY;
       node.x = Math.max(40, Math.min(stage.offsetWidth - 40, nx));
       node.y = Math.max(40, Math.min(stage.offsetHeight - 40, ny));
       el.style.left = node.x + "px";
@@ -815,6 +826,67 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
   stage.addEventListener("pointerdown", function(ev){
     if(ev.target === stage || ev.target === nodesLayer) closePanel();
   });
+
+  // ---------------- canvas size + wheel zoom ----------------
+  // The stage keeps its own untransformed coordinate space - node.x/node.y are
+  // always in those coordinates, never in screen pixels - and the wheel only
+  // changes a CSS scale on top. Anything reading pointer positions therefore
+  // has to divide by the zoom, which stageX/stageY below do.
+  var BASE_W = 4000, BASE_H = 3000, GROW_STEP = 1200;
+  var MIN_ZOOM = 0.15, MAX_ZOOM = 2.5;
+  var stageWrap = document.getElementById("stageWrap");
+  var zoomHint = document.getElementById("zoomHint");
+  var zoom = parseFloat(localStorage.getItem("cesta_zoom") || "1") || 1;
+  var stageW = parseInt(localStorage.getItem("cesta_w") || BASE_W, 10) || BASE_W;
+  var stageH = parseInt(localStorage.getItem("cesta_h") || BASE_H, 10) || BASE_H;
+
+  function applyView(){
+    stage.style.width = stageW + "px";
+    stage.style.height = stageH + "px";
+    stage.style.transform = "scale(" + zoom + ")";
+    // A CSS transform does not change the layout box, so the scrollable area
+    // would stay the same however far you zoom. These margins add (or remove)
+    // exactly the difference, which is what keeps the scrollbars honest.
+    stage.style.marginRight = (stageW * (zoom - 1)) + "px";
+    stage.style.marginBottom = (stageH * (zoom - 1)) + "px";
+    zoomHint.textContent = Math.round(zoom * 100) + " %";
+    localStorage.setItem("cesta_zoom", String(zoom));
+    localStorage.setItem("cesta_w", String(stageW));
+    localStorage.setItem("cesta_h", String(stageH));
+  }
+
+  // Pointer position in stage coordinates, zoom removed.
+  function stageX(clientX){ return (clientX - stage.getBoundingClientRect().left) / zoom; }
+  function stageY(clientY){ return (clientY - stage.getBoundingClientRect().top) / zoom; }
+
+  stageWrap.addEventListener("wheel", function(ev){
+    // The wheel zooms and never scrolls - that is the whole point of taking it
+    // over, so preventDefault is unconditional.
+    ev.preventDefault();
+    var rect = stageWrap.getBoundingClientRect();
+    var mx = ev.clientX - rect.left;
+    var my = ev.clientY - rect.top;
+    // Stage coordinate currently under the cursor. Holding this fixed across
+    // the zoom is what makes it zoom "to the mouse" instead of to a corner.
+    var cx = (stageWrap.scrollLeft + mx) / zoom;
+    var cy = (stageWrap.scrollTop + my) / zoom;
+    var factor = Math.pow(0.9993, ev.deltaY);
+    var next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
+    if(next === zoom) return;
+    zoom = next;
+    applyView();
+    stageWrap.scrollLeft = cx * zoom - mx;
+    stageWrap.scrollTop = cy * zoom - my;
+  }, { passive: false });
+
+  document.getElementById("growBtn").addEventListener("click", function(){
+    stageW += GROW_STEP;
+    stageH += Math.round(GROW_STEP * 0.75);
+    applyView();
+    renderLinks();
+  });
+
+  applyView();
 
   function addNode(catId){
     if(!isEditable()) return;
