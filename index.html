@@ -886,11 +886,31 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     stageWrap.scrollTop = cy * zoom - my;
   }, { passive: false });
 
+  // Scrolls so the middle of the bubbles sits in the middle of the window.
+  // The canvas is much larger than the cluster, so without this the board
+  // opens looking at an empty corner.
+  function centerView(){
+    if(!state || !state.nodes || !state.nodes.length) return;
+    var xs = state.nodes.map(function(n){ return n.x; });
+    var ys = state.nodes.map(function(n){ return n.y; });
+    var cx = (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2;
+    var cy = (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2;
+    stageWrap.scrollLeft = cx * zoom - stageWrap.clientWidth / 2;
+    stageWrap.scrollTop = cy * zoom - stageWrap.clientHeight / 2;
+  }
+
   document.getElementById("growBtn").addEventListener("click", function(){
+    // Grow evenly on both sides and push every node by half the step, so the
+    // cluster stays in the middle instead of drifting toward the top-left.
+    var stepY = Math.round(GROW_STEP * 0.75);
     stageW += GROW_STEP;
-    stageH += Math.round(GROW_STEP * 0.75);
+    stageH += stepY;
+    state.nodes.forEach(function(n){ n.x += GROW_STEP / 2; n.y += stepY / 2; });
+    state.categories.forEach(function(c){ c.x += GROW_STEP / 2; c.y += stepY / 2; });
     applyView();
-    renderLinks();
+    fullRender();
+    centerView();
+    save();
   });
 
   applyView();
@@ -992,9 +1012,13 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     } else if(!board.firstSync){
       set(board.dbRef, state);
     }
+    var wasFirst = !board.firstSync;
     board.firstSync = true;
     var reattached = current ? state.nodes.filter(function(nd){ return nd.id === current.id; })[0] : null;
     fullRender();
+    // Only on the first data for a board - re-centring on every remote update
+    // would yank the view away while the other person is dragging something.
+    if(wasFirst) centerView();
     if(current){
       if(reattached){ current = reattached; els[current.id].classList.add("selected"); }
       else { closePanel(); }
