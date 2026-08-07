@@ -17,17 +17,21 @@
 //     takže tam nikdo nenacpe megabajty,
 //   * zastropovat počet bublin (999) a kategorií (99).
 //
-// NEUMÍ, a je to potřeba říct nahlas:
-//   * NEROZLIŠÍ tebe od cizího člověka. Stránka se přihlašuje ANONYMNĚ
-//     (index.html: signInAnonymously), a anonymní token si vyrobí kdokoli
-//     přes veřejné Firebase API - včetně každého hráče hry, protože ta se
-//     přihlašuje stejně. "auth != null" tedy prakticky znamená "kdokoli".
-//   * Proto ŽLUTÉ VAROVÁNÍ V KONZOLI NEZMIZÍ a nemá zmizet: cizí člověk
-//     pořád může tvoji tabuli přepsat. Jen ji nemůže zvětšit donekonečna
-//     ani z databáze udělat skladiště.
+//   * ROZLIŠIT majitele od cizího člověka - zápis smí JEN účet s e-mailem
+//     dosazeným níž. Anonymní návštěvník e-mail v tokenu nemá, takže může
+//     jen číst. Tohle je ta část, kvůli které žluté varování zmizí.
 //
-// Skutečná oprava = poznat majitele. To jde jedině tak, že se stránka
-// přestane přihlašovat anonymně (nebo se write zamkne na konkrétní uid).
+// NEUMÍ, a je to potřeba říct nahlas:
+//   * Neochrání to před někým, kdo zná tvoje heslo. Bezpečnost desky je od
+//     teď přesně tak dobrá jako to heslo.
+//   * Neschová obsah desky. Přečíst si ji smí každý přihlášený, včetně
+//     anonymních - je to výkladní skříň, ne trezor. Nedávej do poznámek nic,
+//     co nemá vidět cizí člověk.
+//
+// Souvislost se stránkou: index.html se přihlašuje anonymně jen tehdy, když
+// není přihlášený nikdo jiný, a nabízí přihlášení e-mailem (lišta vpravo
+// dole). Kdyby se `signInAnonymously` volalo natvrdo při každém načtení jako
+// dřív, přepsalo by ti to sezení a při každém refreshi tě odhlásilo.
 // Rozepsané je to v docs/db-security-audit.md v repu IdleGame.
 //
 // ------------------------------------------------------------------------
@@ -48,8 +52,20 @@
     ".write": false,
 
     "$board": {
+      // ČTENÍ: kdokoli přihlášený, tedy i anonymní návštěvník stránky.
+      // Deska je veřejná výkladní skříň, nic tajného v ní není.
       ".read":  "auth != null && ($board == 'roadmap' || $board == 'brainstorm')",
-      ".write": "auth != null && ($board == 'roadmap' || $board == 'brainstorm')",
+
+      // ZÁPIS: JEN majitel, poznaný podle e-mailu v podepsaném tokenu.
+      // Anonymní účet e-mail nemá, takže mu tahle podmínka nikdy nevyjde -
+      // a cizí člověk si účet s tímhle e-mailem založit nemůže, protože už
+      // existuje (signUp vrátí EMAIL_EXISTS).
+      //
+      // >>> TADY DOSAĎ SVŮJ E-MAIL, kterým se hlásíš na desce <<<
+      // Musí to být účet, který v tomhle Firebase projektu SKUTEČNĚ existuje.
+      // Když si nejsi jistý, přihlas se na desce a podívej se, co ti napíše
+      // lišta vpravo dole - ukazuje přesně ten e-mail, se kterým jsi uvnitř.
+      ".write": "auth != null && ($board == 'roadmap' || $board == 'brainstorm') && auth.token.email == 'tominokap@gmail.com'",
 
       "canvasW": { ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 100000" },
       "canvasH": { ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 100000" },

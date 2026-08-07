@@ -279,7 +279,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+import { getAuth, signInAnonymously, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-database.js";
 
 (function(){
@@ -1103,9 +1103,89 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     fullRender();
   });
 
-  signInAnonymously(auth).catch(function(err){
-    console.error("Firebase auth failed", err);
-    setStatus("offline");
+  // --- Kdo smí zapisovat -------------------------------------------------
+  // Deska je veřejná výkladní skříň, takže ČÍST ji má smět kdokoli, kdo na ni
+  // přijde - proto se návštěvník pořád přihlašuje anonymně. ZAPISOVAT ale smí
+  // jen majitel, a to se pozná JEDINĚ podle skutečného účtu: anonymní token
+  // si přes veřejné Firebase API vyrobí kdokoli (hra sama ho dává každému
+  // hráči), takže "auth != null" znamená "kdokoli na internetu".
+  //
+  // Rozhoduje `user.isAnonymous`, nic jiného. Skutečné pravidlo je stejně na
+  // serveru (database.rules.json: zápis jen pro konkrétní e-mail) - tohle UI
+  // jen říká pravdu o tom, co projde, aby se člověk nedivil.
+  //
+  // POZOR: `signInAnonymously` se NESMÍ volat natvrdo při každém načtení, jak
+  // to dělala původní verze. Když je majitel přihlášený e-mailem, takové
+  // volání by mu sezení přepsalo novým anonymním účtem a odhlásilo ho při
+  // každém refreshi. Proto se volá jen tehdy, když žádný uživatel není.
+  var canWrite = false;
+  // Dokud neproběhne první přihlášení, je odepřené čtení NORMÁLNÍ stav, ne
+  // porucha: posluchač na /roadmap se pověsí dřív, než token dorazí, a
+  // Firebase si ho po přihlášení sám přehraje znovu. Bez téhle pojistky by
+  // při každém načtení stránky na chvíli probliklo "offline".
+  var authSettled = false;
+
+  var authBar = document.createElement("div");
+  authBar.style.cssText = "position:fixed;right:12px;bottom:12px;z-index:9999;"
+    + "font:12px/1.4 system-ui,sans-serif;background:rgba(20,22,26,.92);"
+    + "color:#dfe3e8;border:1px solid #3a4048;border-radius:8px;padding:8px 10px;"
+    + "display:flex;gap:8px;align-items:center;max-width:min(92vw,420px);flex-wrap:wrap";
+  document.body.appendChild(authBar);
+
+  function renderAuthBar(user){
+    authBar.textContent = "";
+    var label = document.createElement("span");
+    if(canWrite){
+      label.textContent = "✏️ " + (user && user.email ? user.email : "přihlášen") + " — můžeš upravovat";
+      label.style.color = "#7fd28c";
+      authBar.appendChild(label);
+      var out = document.createElement("button");
+      out.textContent = "Odhlásit";
+      out.style.cssText = "cursor:pointer;background:#2a2f36;color:#dfe3e8;border:1px solid #4a515a;border-radius:6px;padding:3px 8px";
+      out.addEventListener("click", function(){ signOut(auth); });
+      authBar.appendChild(out);
+      return;
+    }
+    label.textContent = "👁 Jen ke čtení";
+    authBar.appendChild(label);
+    var mail = document.createElement("input");
+    mail.type = "email"; mail.placeholder = "e-mail"; mail.autocomplete = "username";
+    mail.style.cssText = "width:150px;background:#15181c;color:#dfe3e8;border:1px solid #4a515a;border-radius:6px;padding:3px 6px";
+    var pass = document.createElement("input");
+    pass.type = "password"; pass.placeholder = "heslo"; pass.autocomplete = "current-password";
+    pass.style.cssText = "width:110px;background:#15181c;color:#dfe3e8;border:1px solid #4a515a;border-radius:6px;padding:3px 6px";
+    var go = document.createElement("button");
+    go.textContent = "Přihlásit";
+    go.style.cssText = "cursor:pointer;background:#2a2f36;color:#dfe3e8;border:1px solid #4a515a;border-radius:6px;padding:3px 8px";
+    function submit(){
+      if(!mail.value || !pass.value){ return; }
+      go.disabled = true; go.textContent = "…";
+      signInWithEmailAndPassword(auth, mail.value.trim(), pass.value).catch(function(err){
+        go.disabled = false; go.textContent = "Přihlásit";
+        // Projekt má zapnutou ochranu proti výčtu e-mailů, takže Firebase
+        // schválně nerozliší "špatné heslo" od "účet neexistuje".
+        alert("Přihlášení se nepovedlo: " + (err && err.code ? err.code : err));
+      });
+    }
+    go.addEventListener("click", submit);
+    pass.addEventListener("keydown", function(e){ if(e.key === "Enter"){ submit(); } });
+    authBar.appendChild(mail); authBar.appendChild(pass); authBar.appendChild(go);
+  }
+
+  onAuthStateChanged(auth, function(user){
+    if(!user){
+      canWrite = false;
+      renderAuthBar(null);
+      signInAnonymously(auth).catch(function(err){
+        console.error("Firebase auth failed", err);
+        setStatus("offline");
+        fullRender();
+      });
+      return;
+    }
+    canWrite = !user.isAnonymous;
+    authSettled = true;
+    renderAuthBar(user);
     fullRender();
   });
 
@@ -1116,7 +1196,9 @@ import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebase
     applyIncoming(snapshot.val());
   }, function(err){
     console.error("Firebase read failed", err);
-    setStatus("offline");
+    // Před prvním přihlášením je permission_denied očekávaný mezistav, viz
+    // komentář u `authSettled` výš - hlásit ho jako výpadek by lhalo.
+    if(authSettled){ setStatus("offline"); }
   });
 
 })();
