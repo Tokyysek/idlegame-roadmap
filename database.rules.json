@@ -1,0 +1,91 @@
+// Realtime Database rules pro idlegame-6855b (roadmapová + brainstorm tabule)
+//
+// KAM TO PATŘÍ: Firebase konzole -> Realtime Database -> Rules -> smazat co
+// tam je -> vložit tenhle celý soubor -> Publish. Komentáře konzole snese.
+//
+// CO TAHLE DATABÁZE DRŽÍ: JEN obsah tabule na
+// https://tokyysek.github.io/idlegame-roadmap/ , cesty /roadmap a /brainstorm.
+// ŽÁDNÁ data hráčů - postavy i guildy jsou ve Firestore, ne tady.
+//
+// ------------------------------------------------------------------------
+// CO TYHLE PRAVIDLA UMÍ A CO NE - přečti si to, ať nemáš falešný pocit klidu
+// ------------------------------------------------------------------------
+// UMÍ:
+//   * zavřít kořen, takže nikdo nemůže založit /cokoli a použít databázi
+//     jako svoje zadarmo úložiště (to je dneska ta nejsnazší zneužitelnost),
+//   * vynutit tvar tabule - známá pole, známé typy, stropy na délku textu,
+//     takže tam nikdo nenacpe megabajty,
+//   * zastropovat počet bublin (999) a kategorií (99).
+//
+// NEUMÍ, a je to potřeba říct nahlas:
+//   * NEROZLIŠÍ tebe od cizího člověka. Stránka se přihlašuje ANONYMNĚ
+//     (index.html: signInAnonymously), a anonymní token si vyrobí kdokoli
+//     přes veřejné Firebase API - včetně každého hráče hry, protože ta se
+//     přihlašuje stejně. "auth != null" tedy prakticky znamená "kdokoli".
+//   * Proto ŽLUTÉ VAROVÁNÍ V KONZOLI NEZMIZÍ a nemá zmizet: cizí člověk
+//     pořád může tvoji tabuli přepsat. Jen ji nemůže zvětšit donekonečna
+//     ani z databáze udělat skladiště.
+//
+// Skutečná oprava = poznat majitele. To jde jedině tak, že se stránka
+// přestane přihlašovat anonymně (nebo se write zamkne na konkrétní uid).
+// Rozepsané je to v docs/db-security-audit.md v repu IdleGame.
+//
+// ------------------------------------------------------------------------
+// PAST PRO BUDOUCNOST
+// ------------------------------------------------------------------------
+// Seznam polí níž MUSÍ souhlasit s tím, co zapisuje index.html
+// (funkce freshState / freshBrainstormState, kolem ř. 455-483).
+// Dneska: uzel = id, cat, label, status, color, note, x, y, kind
+//         kategorie = id, label, color, x, y
+// Když do bubliny v index.html přidáš NOVÉ pole a nepřidáš ho sem,
+// "$other": {".validate": false} ho odmítne a ukládání tabule TIŠE PŘESTANE
+// FUNGOVAT (stránka jen dostane chybu do konzole prohlížeče). Přidáváš pole?
+// Přidej ho i sem.
+{
+  "rules": {
+    // Kořen zavřený. Nic mimo /roadmap a /brainstorm nesmí vzniknout.
+    ".read": false,
+    ".write": false,
+
+    "$board": {
+      ".read":  "auth != null && ($board == 'roadmap' || $board == 'brainstorm')",
+      ".write": "auth != null && ($board == 'roadmap' || $board == 'brainstorm')",
+
+      "canvasW": { ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 100000" },
+      "canvasH": { ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 100000" },
+
+      // Pole se v RTDB ukládá jako objekt s klíči "0","1","2"... Regex na
+      // index je zároveň strop počtu bublin: nejvýš 1000 (indexy 0-999).
+      "nodes": {
+        "$i": {
+          ".validate": "$i.matches(/^[0-9]{1,3}$/)",
+          "id":     { ".validate": "newData.isString() && newData.val().length <= 64" },
+          "cat":    { ".validate": "newData.isString() && newData.val().length <= 64" },
+          "label":  { ".validate": "newData.isString() && newData.val().length <= 200" },
+          "status": { ".validate": "newData.isString() && newData.val().length <= 32" },
+          "color":  { ".validate": "newData.isString() && newData.val().length <= 32" },
+          "note":   { ".validate": "newData.isString() && newData.val().length <= 4000" },
+          "kind":   { ".validate": "newData.isString() && newData.val().length <= 32" },
+          "x":      { ".validate": "newData.isNumber()" },
+          "y":      { ".validate": "newData.isNumber()" },
+          "$other": { ".validate": false }
+        }
+      },
+
+      // Nejvýš 100 kategorií (indexy 0-99).
+      "categories": {
+        "$i": {
+          ".validate": "$i.matches(/^[0-9]{1,2}$/)",
+          "id":     { ".validate": "newData.isString() && newData.val().length <= 64" },
+          "label":  { ".validate": "newData.isString() && newData.val().length <= 200" },
+          "color":  { ".validate": "newData.isString() && newData.val().length <= 32" },
+          "x":      { ".validate": "newData.isNumber()" },
+          "y":      { ".validate": "newData.isNumber()" },
+          "$other": { ".validate": false }
+        }
+      },
+
+      "$other": { ".validate": false }
+    }
+  }
+}
